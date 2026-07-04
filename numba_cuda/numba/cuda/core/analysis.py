@@ -85,14 +85,29 @@ def compute_live_map(cfg, blocks, var_use_map, var_def_map):
             old_point = new_point
             new_point = fix_point_progress(dct)
 
+    # These depend only on the CFG and the use/def maps, not on the fix-point
+    # accumulator, so hoist them out of the iterations that recompute them.
+    used_or_defined = {
+        offset: var_def_map[offset] | var_use_map[offset]
+        for offset in var_def_map
+    }
+    successors = {
+        offset: [out_blk for out_blk, _ in cfg.successors(offset)]
+        for offset in var_def_map
+    }
+    predecessors = {
+        offset: [inc_blk for inc_blk, _ in cfg.predecessors(offset)]
+        for offset in blocks.keys()
+    }
+
     def def_reach(dct):
         """Find all variable definition reachable at the entry of a block"""
         for offset in var_def_map:
-            used_or_defined = var_def_map[offset] | var_use_map[offset]
-            dct[offset] |= used_or_defined
+            dct[offset] |= used_or_defined[offset]
             # Propagate to outgoing nodes
-            for out_blk, _ in cfg.successors(offset):
-                dct[out_blk] |= dct[offset]
+            cur = dct[offset]
+            for out_blk in successors[offset]:
+                dct[out_blk] |= cur
 
     def liveness(dct):
         """Find live variables.
@@ -102,7 +117,7 @@ def compute_live_map(cfg, blocks, var_use_map, var_def_map):
         for offset in dct:
             # Live vars here
             live_vars = dct[offset]
-            for inc_blk, _data in cfg.predecessors(offset):
+            for inc_blk in predecessors[offset]:
                 # Reachable at the predecessor
                 reachable = live_vars & def_reach_map[inc_blk]
                 # But not defined in the predecessor
