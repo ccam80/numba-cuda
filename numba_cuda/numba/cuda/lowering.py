@@ -445,6 +445,22 @@ class Lower(BaseLower):
                 for var in vl:
                     var_use_map[var].add(blk)
 
+            # Per-block count of assignments per target name. Computed once
+            # per block (lazily) so the singly-assigned check below is an O(1)
+            # lookup instead of rescanning the whole block body for every
+            # variable (which is quadratic in block size on large kernels).
+            assign_counts_cache = {}
+
+            def assign_counts(defblk):
+                counts = assign_counts_cache.get(defblk)
+                if counts is None:
+                    counts = defaultdict(int)
+                    for stmt in self.blocks[defblk].body:
+                        if isinstance(stmt, ir.assign_types):
+                            counts[stmt.target.name] += 1
+                    assign_counts_cache[defblk] = counts
+                return counts
+
             # Keep only variables that are defined locally and used locally
             for var in var_assign_map:
                 if var not in alloca_vars and len(var_assign_map[var]) == 1:
@@ -453,15 +469,7 @@ class Lower(BaseLower):
                         # Ensure that the variable is not defined multiple times
                         # in the block
                         [defblk] = var_assign_map[var]
-                        assign_stmts = self.blocks[defblk].find_insts(
-                            ir.assign_types
-                        )
-                        assigns = [
-                            stmt
-                            for stmt in assign_stmts
-                            if stmt.target.name == var
-                        ]
-                        if len(assigns) == 1:
+                        if assign_counts(defblk)[var] == 1:
                             sav.add(var)
 
         self._singly_assigned_vars = sav
