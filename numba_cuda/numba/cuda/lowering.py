@@ -95,8 +95,23 @@ class BaseLower:
         # Loc notify objects
         self._loc_notify_registry = get_registered_loc_notify()
 
+        # Signatures resolved while lowering individual instructions.
+        # The typing context is frozen during lowering, so a
+        # (callable type, argument types) pair always resolves to the
+        # same signature; without the cache every getitem/setitem/
+        # binop instruction repeated full template matching.
+        self._call_type_cache = {}
+
         # Subclass initialization
         self.init()
+
+    def _resolve_call_type_cached(self, fnop, args):
+        key = (fnop, args)
+        sig = self._call_type_cache.get(key)
+        if sig is None:
+            sig = fnop.get_call_type(self.context.typing_context, args, {})
+            self._call_type_cache[key] = sig
+        return sig
 
     @property
     def call_conv(self):
@@ -623,11 +638,7 @@ class Lower(BaseLower):
 
             op = operator.delitem
             fnop = self.context.typing_context.resolve_value_type(op)
-            callsig = fnop.get_call_type(
-                self.context.typing_context,
-                signature.args,
-                {},
-            )
+            callsig = self._resolve_call_type_cached(fnop, signature.args)
             impl = self.context.get_function(fnop, callsig)
 
             assert targetty == signature.args[0]
@@ -684,11 +695,7 @@ class Lower(BaseLower):
 
         op = operator.setitem
         fnop = self.context.typing_context.resolve_value_type(op)
-        callsig = fnop.get_call_type(
-            self.context.typing_context,
-            signature.args,
-            {},
-        )
+        callsig = self._resolve_call_type_cached(fnop, signature.args)
         impl = self.context.get_function(fnop, callsig)
 
         # Convert argument to match
@@ -900,7 +907,7 @@ class Lower(BaseLower):
 
         # Normal implementation for generic arguments
 
-        sig = op.get_call_type(self.context.typing_context, signature.args, {})
+        sig = self._resolve_call_type_cached(op, signature.args)
         impl = self.context.get_function(op, sig)
         res = impl(self.builder, (lhs, rhs))
         return cast_result(res)
@@ -911,11 +918,7 @@ class Lower(BaseLower):
         # Get implementation of getitem
         op = operator.getitem
         fnop = self.context.typing_context.resolve_value_type(op)
-        callsig = fnop.get_call_type(
-            self.context.typing_context,
-            signature.args,
-            {},
-        )
+        callsig = self._resolve_call_type_cached(fnop, signature.args)
         impl = self.context.get_function(fnop, callsig)
 
         argvals = (baseval, indexval)
