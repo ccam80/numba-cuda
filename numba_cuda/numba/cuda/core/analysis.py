@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: BSD-2-Clause
 
-from collections import namedtuple, defaultdict, deque
+from collections import namedtuple, defaultdict
 from numba.cuda import types
 from numba.cuda.core import ir
 from numba.cuda.core import errors
@@ -68,63 +68,68 @@ def compute_use_defs(blocks):
 def compute_live_map(cfg, blocks, var_use_map, var_def_map):
     """
     Find variables that must be alive at the ENTRY of each block.
-
-    Both dataflow problems (forward definition reach, backward
-    liveness) are monotone set unions, so a worklist that revisits a
-    block only when one of its inputs grew computes the same least
-    fixed point as repeated whole-graph sweeps, without re-scanning
-    unchanged blocks.
+    We use a simple fix-point algorithm that iterates until the set of
+    live variables is unchanged for each block.
     """
+
+    def fix_point_progress(dct):
+        """Helper function to determine if a fix-point has been reached."""
+        return tuple(len(v) for v in dct.values())
+
+    def fix_point(fn, dct):
+        """Helper function to run fix-point algorithm."""
+        old_point = None
+        new_point = fix_point_progress(dct)
+        while old_point != new_point:
+            fn(dct)
+            old_point = new_point
+            new_point = fix_point_progress(dct)
+
+    # These depend only on the CFG and the use/def maps, not on the fix-point
+    # accumulator, so hoist them out of the iterations that recompute them.
+    used_or_defined = {
+        offset: var_def_map[offset] | var_use_map[offset]
+        for offset in var_def_map
+    }
     successors = {
         offset: [out_blk for out_blk, _ in cfg.successors(offset)]
-        for offset in blocks.keys()
+        for offset in var_def_map
     }
     predecessors = {
         offset: [inc_blk for inc_blk, _ in cfg.predecessors(offset)]
         for offset in blocks.keys()
     }
 
-    # Forward: definitions (and uses) of every block that can reach
-    # this block, including the block itself.
-    def_reach_map = {
-        offset: var_def_map[offset] | var_use_map[offset]
-        for offset in blocks.keys()
-    }
-    worklist = deque(blocks.keys())
-    queued = set(worklist)
-    while worklist:
-        offset = worklist.popleft()
-        queued.discard(offset)
-        reach = def_reach_map[offset]
-        for out_blk in successors[offset]:
-            missing = reach - def_reach_map[out_blk]
-            if missing:
-                def_reach_map[out_blk] |= missing
-                if out_blk not in queued:
-                    queued.add(out_blk)
-                    worklist.append(out_blk)
+    def def_reach(dct):
+        """Find all variable definition reachable at the entry of a block"""
+        for offset in var_def_map:
+            dct[offset] |= used_or_defined[offset]
+            # Propagate to outgoing nodes
+            cur = dct[offset]
+            for out_blk in successors[offset]:
+                dct[out_blk] |= cur
 
-    # Backward: push variable usage to predecessors, restricted to
-    # variables a definition can reach and not defined in the
-    # predecessor itself.
-    live_map = {
-        offset: set(var_use_map[offset]) for offset in blocks.keys()
-    }
-    worklist = deque(blocks.keys())
-    queued = set(worklist)
-    while worklist:
-        offset = worklist.popleft()
-        queued.discard(offset)
-        live_vars = live_map[offset]
-        for inc_blk in predecessors[offset]:
-            reachable = live_vars & def_reach_map[inc_blk]
-            missing = (reachable - var_def_map[inc_blk]) - live_map[inc_blk]
-            if missing:
-                live_map[inc_blk] |= missing
-                if inc_blk not in queued:
-                    queued.add(inc_blk)
-                    worklist.append(inc_blk)
+    def liveness(dct):
+        """Find live variables.
 
+        Push var usage backward.
+        """
+        for offset in dct:
+            # Live vars here
+            live_vars = dct[offset]
+            for inc_blk in predecessors[offset]:
+                # Reachable at the predecessor
+                reachable = live_vars & def_reach_map[inc_blk]
+                # But not defined in the predecessor
+                dct[inc_blk] |= reachable - var_def_map[inc_blk]
+
+    live_map = {}
+    for offset in blocks.keys():
+        live_map[offset] = set(var_use_map[offset])
+
+    def_reach_map = defaultdict(set)
+    fix_point(def_reach, def_reach_map)
+    fix_point(liveness, live_map)
     return live_map
 
 
