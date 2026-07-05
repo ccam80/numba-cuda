@@ -731,13 +731,17 @@ class CallConstraint:
 
         # Mark this resolution as repeatable only when re-running it
         # with identical inputs could not produce a different outcome:
-        # a precise return type skips the target-unification branch,
-        # a non-BoundFunction skips receiver refinement, and absence
-        # from the refine map means no later refinement will call back
-        # into this constraint.
+        # a template-based BaseFunction resolves purely from its
+        # registered templates (unlike e.g. a Dispatcher, whose
+        # resolution consults the callee's still-refining inference
+        # state during recursion), a precise return type skips the
+        # target-unification branch, a non-BoundFunction skips
+        # receiver refinement, and absence from the refine map means
+        # no later refinement will call back into this constraint.
         if (
-            sig.return_type.is_precise()
+            isinstance(fnty, types.BaseFunction)
             and not isinstance(fnty, types.BoundFunction)
+            and sig.return_type.is_precise()
             and typeinfer.refine_map.get(self.target) is not self
         ):
             self._resolved_key = resolve_key
