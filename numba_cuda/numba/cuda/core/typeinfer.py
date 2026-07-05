@@ -607,6 +607,13 @@ class CallConstraint:
         self.kws = kws or {}
         self.vararg = vararg
         self.loc = loc
+        # Input types of the last successful resolution, when that
+        # resolution is provably repeatable (see resolve). The
+        # propagation fix-point re-executes every constraint each
+        # round; when the inputs are unchanged the resolution result
+        # is identical, so the (expensive) template matching can be
+        # skipped.
+        self._resolved_key = None
 
     def __call__(self, typeinfer):
         msg = "typing of call at {0}\n".format(self.loc)
@@ -639,6 +646,15 @@ class CallConstraint:
         if isinstance(fnty, types.TypeRef):
             # Unwrap TypeRef
             fnty = fnty.instance_type
+
+        resolve_key = (fnty, pos_args, tuple(sorted(kw_args.items())))
+        if resolve_key == self._resolved_key:
+            # Same inputs as the last successful resolution and that
+            # resolution was repeatable: the signature, the target
+            # type addition and the refinement bookkeeping would all
+            # be identical, so there is nothing new to compute.
+            return
+
         try:
             sig = typeinfer.resolve_call(fnty, pos_args, kw_args)
         except ForceLiteralArg as e:
@@ -712,6 +728,21 @@ class CallConstraint:
 
         self.signature = sig
         self._add_refine_map(typeinfer, typevars, sig)
+
+        # Mark this resolution as repeatable only when re-running it
+        # with identical inputs could not produce a different outcome:
+        # a precise return type skips the target-unification branch,
+        # a non-BoundFunction skips receiver refinement, and absence
+        # from the refine map means no later refinement will call back
+        # into this constraint.
+        if (
+            sig.return_type.is_precise()
+            and not isinstance(fnty, types.BoundFunction)
+            and typeinfer.refine_map.get(self.target) is not self
+        ):
+            self._resolved_key = resolve_key
+        else:
+            self._resolved_key = None
 
     def _add_refine_map(self, typeinfer, typevars, sig):
         """Add this expression to the refine_map base on the type of target_type"""
