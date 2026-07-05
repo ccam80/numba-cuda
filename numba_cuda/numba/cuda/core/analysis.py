@@ -112,9 +112,15 @@ def compute_live_map(cfg, blocks, var_use_map, var_def_map):
     def liveness(dct):
         """Find live variables.
 
-        Push var usage backward.
+        Push var usage backward. Blocks are visited in reverse label
+        order: labels ascend roughly along the flow of control, so the
+        reversed order approximates a reverse topological order and
+        liveness reaches across the whole function in a couple of
+        sweeps. In ascending order each sweep only moved liveness one
+        block backward, needing as many sweeps as the function is
+        deep.
         """
-        for offset in dct:
+        for offset in reversed(dct):
             # Live vars here
             live_vars = dct[offset]
             for inc_blk in predecessors[offset]:
