@@ -83,16 +83,21 @@ class PostProcessor:
         vlt = VariableLifetime(self.func_ir.blocks)
         self.func_ir.variable_lifetime = vlt
 
-        bev = analysis.compute_live_variables(
-            vlt.cfg,
-            self.func_ir.blocks,
-            vlt.usedefs.defmap,
-            vlt.deadmaps.combined,
-        )
-        for offset, ir_block in self.func_ir.blocks.items():
-            self.func_ir.block_entry_vars[ir_block] = bev[offset]
-
         if self.func_ir.is_generator:
+            # Only generator info consumes the entry-liveness result
+            # (via get_block_entry_vars); non-generator consumers of
+            # liveness use the lazily computed properties on
+            # VariableLifetime instead, so the fix-point analyses are
+            # not run eagerly for them.
+            bev = analysis.compute_live_variables(
+                vlt.cfg,
+                self.func_ir.blocks,
+                vlt.usedefs.defmap,
+                vlt.deadmaps.combined,
+            )
+            for offset, ir_block in self.func_ir.blocks.items():
+                self.func_ir.block_entry_vars[ir_block] = bev[offset]
+
             self.func_ir.generator_info = GeneratorInfo()
             self._compute_generator_info()
         else:
