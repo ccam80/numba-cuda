@@ -115,6 +115,12 @@ class _MetaTargetConfig(type):
         # Store the options into class attribute as a ready-only mapping.
         cls.options = MappingProxyType(opts)
 
+        # __hash__ sorts the values() mapping, which iterates option
+        # names only, so its result is a per-class constant. Compute it
+        # here once instead of rebuilding the values() dict on every
+        # hash; flags objects are hashed heavily inside typing caches.
+        cls._precomputed_hash = hash(tuple(sorted(opts)))
+
         # Make properties for each of the options
         def make_prop(name, option):
             def getter(self):
@@ -196,7 +202,10 @@ class TargetConfig(metaclass=_MetaTargetConfig):
         return f"{clsname}({', '.join(args)}, [{', '.join(defs)}])"
 
     def __hash__(self):
-        return hash(tuple(sorted(self.values())))
+        # Equal to hash(tuple(sorted(self.values()))): sorting the
+        # values() mapping iterates option names only, so the hash is
+        # the per-class constant precomputed by the metaclass.
+        return self._precomputed_hash
 
     def __eq__(self, other):
         if isinstance(other, TargetConfig):
