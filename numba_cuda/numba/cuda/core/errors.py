@@ -578,7 +578,11 @@ class NumbaError(numba.core.errors.NumbaError):
             new_msg = "%s\n%s\n" % (msg, loc.strformat())
         else:
             new_msg = "%s" % (msg,)
-        super(NumbaError, self).__init__(highlight(new_msg))
+        # The message is already highlighted here; tell the numba.core
+        # base class not to run its own termcolor pass over it again.
+        super(NumbaError, self).__init__(
+            highlight(new_msg), highlighting=False
+        )
 
     @property
     def contexts(self):
