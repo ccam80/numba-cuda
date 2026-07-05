@@ -73,9 +73,13 @@ def _run_ssa(blocks):
         # untouched. The def/use block sets collected up front stay
         # valid throughout: the passes rename assignment targets and
         # uses of the current variable only, and phi nodes introduce
-        # only freshly versioned names.
+        # only freshly versioned names. The uses map excludes a
+        # variable's use on the RHS of an assignment to itself
+        # (e.g. ``x = x + 1``), but such a use can only appear in a
+        # statement that assigns the variable, so its block is always
+        # a def block; the fix pass therefore visits the union.
         def_labels = {label for _assign, label in defs[varname]}
-        use_labels = uses[varname]
+        use_labels = uses[varname] | def_labels
         # Fix up the LHS
         # Put fresh variables for all assignments to the variable
         blocks, defmap = _fresh_vars(blocks, varname, def_labels)
